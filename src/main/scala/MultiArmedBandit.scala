@@ -75,6 +75,7 @@ object BanditOps {
       estimatedValueHistory =
         //running average of rewards
         bandit.estimatedValueHistory :+
+          //TODO: make this a running average instead of recalculating it each time
           (bandit.estimatedValueHistory :+ bandit.reward).sum / (bandit.timesPicked + 1.0),
       timesPicked = bandit.timesPicked + 1,
       name = bandit.name
