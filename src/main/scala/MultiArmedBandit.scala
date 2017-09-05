@@ -19,6 +19,8 @@ import scala.util.Random
 
 object MultiArmedBandit {
 
+  import BanditOps._
+
   def main(args: Array[String]): Unit = {
     val logger = Logger.getLogger(MultiArmedBandit.getClass.getCanonicalName)
 
@@ -36,19 +38,6 @@ object MultiArmedBandit {
            |bandit real reward: ${b.value}
            |bandit estimated reward: ${b.estimatedValueHistory.lastOption}
          """.stripMargin)
-    }
-
-    implicit val banditOrdering:Ordering[Bandit] = new Ordering[Bandit] {
-      override def compare(x: Bandit, y: Bandit): Int = {
-        val comp = for {
-          b1 <- x.estimatedValueHistory.lastOption
-          b2 <- y.estimatedValueHistory.lastOption
-        } yield {
-          if (b1 < b2) -1
-          else 1
-        }
-        comp.getOrElse(0)
-      }
     }
 
     logger.info(s"Bandit with highest estimated reward:${resultBandits.max.name} with reward:${resultBandits.max.estimatedValueHistory.last} ")
@@ -91,6 +80,19 @@ object BanditOps {
       name = bandit.name
     )
   }
+
+  implicit val banditOrdering:Ordering[Bandit] = new Ordering[Bandit] {
+    override def compare(x: Bandit, y: Bandit): Int = {
+      val comp = for {
+        b1 <- x.estimatedValueHistory.lastOption
+        b2 <- y.estimatedValueHistory.lastOption
+      } yield {
+        if (b1 < b2) -1
+        else 1
+      }
+      comp.getOrElse(0)
+    }
+  }
 }
 
 case class Bandit(
@@ -104,5 +106,5 @@ case class Bandit(
     * then simply the bandit with the highest reward the first time is going to
     * be the most profitable bandit
     * */
-  def reward = value + Random.nextDouble()
+  def reward = value + (Random.nextDouble() / 2)
 }
