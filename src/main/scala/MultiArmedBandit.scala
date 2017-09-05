@@ -1,9 +1,12 @@
 import java.util.logging.Logger
 
-import breeze.linalg.{DenseVector, argmax}
+import breeze.linalg.support.CanCreateZerosLike
+import breeze.linalg.{DenseVector, NumericOps, argmax}
+import breeze.math.Ring
 import breeze.optimize.proximal.LinearGenerator
 import breeze.optimize.{StochasticDiffFunction, StochasticGradientDescent}
 
+import scala.annotation.tailrec
 import scala.util.Random
 
 
@@ -19,58 +22,87 @@ object MultiArmedBandit {
   def main(args: Array[String]): Unit = {
     val logger = Logger.getLogger(MultiArmedBandit.getClass.getCanonicalName)
 
-    val w1 = Random.nextDouble()
-    val w2 = Random.nextDouble()
-    val randomWeights = Seq(w1, w2)
+    val b1 = Bandit(value = .5)
+    val b2 = Bandit(value = .8)
+    val b3 = Bandit(value = .9)
+    val b4 = Bandit(name ="pickThisOne",value = .99)
+    val bs = List(b1, b2,b3, b4)
 
-    val bandit1 = Bandit(.5)
-    val bandit2 = Bandit(.8)
-    val bandits = Seq(bandit1, bandit2)
+    val resultBandits = run(bs, 10000)
+    resultBandits.foreach{ b =>
+      logger.info(
+        s"""
+           |bandit name: ${b.name}
+           |bandit real reward: ${b.value}
+           |bandit estimated reward: ${b.estimatedValueHistory.lastOption}
+         """.stripMargin)
+    }
 
-    val func = StochasticGradientDescent().minimize(Cost(bandits), randomWeights)
+    implicit val banditOrdering:Ordering[Bandit] = new Ordering[Bandit] {
+      override def compare(x: Bandit, y: Bandit): Int = {
+        val comp = for {
+          b1 <- x.estimatedValueHistory.lastOption
+          b2 <- y.estimatedValueHistory.lastOption
+        } yield {
+          if (b1 < b2) -1
+          else 1
+        }
+        comp.getOrElse(0)
+      }
+    }
 
-    println(func)
+    logger.info(s"Bandit with highest estimated reward:${resultBandits.max.name} with reward:${resultBandits.max.estimatedValueHistory.last} ")
+  }
+
+  @tailrec
+  def run(bandits:Seq[Bandit], x:Int): Seq[Bandit] ={
+    if (x > 0) {
+      val (remainder, optPicked) = BanditOps.chooseBandit(bandits, .1, Random.nextDouble() )
+      run(remainder ++ optPicked.map{ BanditOps.updateBandit( _ ) }.toSeq, x - 1)
+    } else bandits
   }
 }
 
-case class Cost(bandits:Seq[Bandit]) extends StochasticDiffFunction[Seq[Double]] {
-  assert(bandits.size >= 2, "must have 2 or more bandits ")
-
-  val chanceOfRandomAction = .1
-
-  def calculate(x: Seq[Double]): (Double, Seq[Double]) = {
-
-    val randomNum = Random.nextDouble()
-
-    if (randomNum > chanceOfRandomAction) {
-      val (weight, bandit) = x.zip(bandits).reduceLeft{ case (c1,c2) =>
-        if (c1._1 > c2._1) c1
-        else c2
-      }
-
-      val loss = -1 * math.log(weight) * bandit.reward.value.toDouble
-      (loss, x)
+object BanditOps {
+  def chooseBandit(bandits:Seq[Bandit], epsilon:Double, randomDouble:Double) = {
+    if (epsilon > randomDouble) {
+      val (h, randomBandit::tail) = bandits.splitAt(Random.nextInt(bandits.length))
+      (h ++ tail, Some(randomBandit))
     }
     else {
-      val randomIndex = Random.nextInt(bandits.length)
-      val (bb, randomBandit::eb) = bandits.splitAt(randomIndex)
-      val (bw, randomWeight::ew) = x.splitAt(randomIndex)
-      val loss = -1 * math.log(randomWeight) * randomBandit.reward.value.toDouble
-      (loss, x)
+      bandits.foldLeft((Nil:List[Bandit], None:Option[Bandit])){
+        case ((runningList, previousMaxBandit), nextBandit) => {
+          if(previousMaxBandit.exists(_.reward > nextBandit.reward))
+            (runningList :+ nextBandit, previousMaxBandit)
+          else (runningList ++ previousMaxBandit.toList, Some(nextBandit))
+        }
+      }
     }
   }
-}
 
-case class Bandit(value:Double){
-  private def result = Random.nextInt(1)
-
-  def reward:Reward = {
-    val reward =
-      if (result > value) 1
-      else -1
-
-    Reward(reward)
+  def updateBandit(bandit:Bandit):Bandit = {
+    Bandit(
+      value = bandit.value,
+      estimatedValueHistory =
+        //running average of rewards
+        bandit.estimatedValueHistory :+
+          (bandit.estimatedValueHistory :+ bandit.reward).sum / (bandit.timesPicked + 1.0),
+      timesPicked = bandit.timesPicked + 1,
+      name = bandit.name
+    )
   }
 }
 
-case class Reward(value:Int)
+case class Bandit(
+                   name:String = "aBandit",
+                   value:Double = Random.nextDouble(),
+                   estimatedValueHistory:List[Double] = Nil,
+                   timesPicked:Int = 0
+                 ) {
+  /**
+    * Do this because if the reward is always the same,
+    * then simply the bandit with the highest reward the first time is going to
+    * be the most profitable bandit
+    * */
+  def reward = value + Random.nextDouble()
+}
